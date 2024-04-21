@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "dust",
+    "dust_macro",
+]
+
+[workspace.package]
+version = "0.1.0"
+rust-version = "1.75"

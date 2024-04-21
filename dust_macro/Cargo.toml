@@ -1,0 +1,22 @@
+[package]
+name = "dust_macro"
+version = { workspace = true }
+edition = "2021"
+authors = ["Luca Mattos Moller"]
+license = "MIT"
+repository = "https://github.com/lucamoller/dust"
+description = "Macros for the Dust web framework."
+readme = "../README.md"
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+convert_case = "0.6"
+derivative = "2.2"
+syn = { version = "2.0", features = ["extra-traits", "full", "printing"] }
+once_cell = "1.19.0"
+proc-macro2 = "1.0.74"
+quote = "1.0"
+

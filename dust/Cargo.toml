@@ -1,0 +1,48 @@
+[package]
+name = "lucamoller_dust"
+version = { workspace = true }
+edition = "2021"
+authors = ["Luca Mattos Moller"]
+license = "MIT"
+repository = "https://github.com/lucamoller/dust"
+description = "Dust a full-stack web framework that aims to enable quick development of interactive apps. It's inspired by Plotly Dash, Dash in Rust -> Dust."
+readme = "../README.md"
+rust-version.workspace = true
+
+[lib]
+name = "dust"
+
+[dependencies]
+axum = { version = "0.7", optional = true }
+console_error_panic_hook = { version = "0.1" }
+dust_macro = { version = "0.1.0", path = "../dust_macro" }
+http = { version = "1" }
+leptos = { version = "0.6", features = ["nightly"] }
+leptos_axum = { version = "0.6", optional = true }
+leptos_meta = { version = "0.6", features = ["nightly"] }
+leptos_router = { version = "0.6", features = ["nightly"] }
+tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
+once_cell = { version = "1.19.0" }
+serde = { version = "1", features = ["derive"] }
+tower = { version = "0.4", optional = true }
+tower-http = { version = "0.5", features = ["fs"], optional = true }
+wasm-bindgen = { version = "0.2.92", optional = true }
+web-sys = { version = "0.3.63" }
+
+[features]
+hydrate = [
+    "dep:wasm-bindgen",
+    "leptos/hydrate", 
+    "leptos_meta/hydrate", 
+    "leptos_router/hydrate"
+]
+ssr = [
+    "dep:axum",
+    "dep:tokio",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:leptos_axum",
+    "leptos/ssr",
+    "leptos_meta/ssr",
+    "leptos_router/ssr",
+]

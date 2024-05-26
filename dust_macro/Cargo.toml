@@ -1,5 +1,5 @@
 [package]
-name = "dust_macro"
+name = "lucamoller_dust_macro"
 version = { workspace = true }
 edition = "2021"
 authors = ["Luca Mattos Moller"]

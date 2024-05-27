@@ -15,7 +15,7 @@ name = "dust"
 [dependencies]
 axum = { version = "0.7", optional = true }
 console_error_panic_hook = { version = "0.1" }
-dust_macro = { version = "0.1.0", path = "../dust_macro" }
+dust_macro = { version = "0.1.0", path = "../dust_macro", package = "lucamoller_dust_macro" }
 http = { version = "1" }
 leptos = { version = "0.6", features = ["nightly"] }
 leptos_axum = { version = "0.6", optional = true }

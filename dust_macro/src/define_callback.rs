@@ -49,13 +49,11 @@ fn get_arg_type(arg: &syn::FnArg) -> CallbackArgType {
 pub fn dust_define_callback(args: TokenStream, input: TokenStream) -> TokenStream {
     let state_struct = parse_macro_input!(args as syn::Ident);
     let function = parse_macro_input!(input as syn::Item);
-    // let function = parse_macro_input!(input as syn::Item);
-    // eprintln!("{:#?}", function);
 
     let function_name = if let syn::Item::Fn(syn::ItemFn { ref sig, .. }) = function {
         sig.ident.clone()
     } else {
-        panic!("missing fuction name")
+        panic!("missing function name")
     };
 
     let get_callback_args = |item: &syn::Item| -> Vec<CallbackArg> {
@@ -176,22 +174,23 @@ pub fn dust_define_callback(args: TokenStream, input: TokenStream) -> TokenStrea
         fn #get_info_name() ->  <#state_struct as dust::StateTypes>::CallbackInfo{
             <#state_struct as dust::StateTypes>::CallbackInfo::new(
                 #function_name_str,
-                #wrapper_name,
+                #[cfg(feature = "ssr")]
+                Some(#wrapper_name),
+                #[cfg(not(feature = "ssr"))]
+                None,
                 vec![#(#input_entries,)*],
                 vec![#(#output_entries,)*],
             )
-            // <State as dust::StateTypes>::CallbackInfo {
-            //     name: #function_name_str,
-            //     cb: #wrapper_name,
-            //     inputs: vec![#(#input_entries,)*],
-            //     outputs: vec![#(#output_entries,)*],
-            // }
         }
     };
 
     quote! {
+        #[cfg(feature = "ssr")]
         #function
+
+        #[cfg(feature = "ssr")]
         #wrapper
+        
         #get_info_fn
     }
     .into()

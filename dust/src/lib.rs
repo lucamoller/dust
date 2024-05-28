@@ -6,7 +6,7 @@ use std::hash::Hash;
 pub mod file_handler;
 pub mod serve;
 
-pub use dust_macro::{DustState, dust_define_callback, dust_lib, dust_main};
+pub use dust_macro::{dust_define_callback, dust_lib, dust_main, DustState};
 
 // Re-exports
 pub use console_error_panic_hook;
@@ -56,13 +56,18 @@ impl<T: Clone> Output<T> {
 #[derive(Clone)]
 pub struct StateCallback<I, V, S> {
     pub name: &'static str,
-    pub cb: fn(&mut S) -> Vec<V>,
+    pub cb: Option<fn(&mut S) -> Vec<V>>,
     pub inputs: Vec<I>,
     pub outputs: Vec<I>,
 }
 
 impl<I, S, V> StateCallback<I, V, S> {
-    pub fn new(name: &'static str, cb: fn(&mut S) -> Vec<V>, inputs: Vec<I>, outputs: Vec<I>) -> Self {
+    pub fn new(
+        name: &'static str,
+        cb: Option<fn(&mut S) -> Vec<V>>,
+        inputs: Vec<I>,
+        outputs: Vec<I>,
+    ) -> Self {
         Self {
             name,
             cb,
@@ -77,17 +82,14 @@ impl<I, S, V> std::hash::Hash for StateCallback<I, V, S> {
     where
         H: std::hash::Hasher,
     {
-        let pointer = self.cb as *const ();
-        pointer.hash(state);
+        self.name.hash(state);
         state.finish();
     }
 }
 
 impl<I, V, S> PartialEq for StateCallback<I, V, S> {
     fn eq(&self, other: &StateCallback<I, V, S>) -> bool {
-        let self_pointer = self.cb as *const ();
-        let other_pointer = other.cb as *const ();
-        return self_pointer == other_pointer;
+        return self.name == other.name;
     }
 }
 
@@ -350,7 +352,7 @@ where
         for id in execution_plan.iter() {
             let callback = &self.callbacks[*id].callback;
 
-            let mut new_updates = (callback.cb)(&mut state);
+            let mut new_updates = (callback.cb.unwrap())(&mut state);
             state.apply_updates(&new_updates);
             output_updates.append(&mut new_updates);
         }

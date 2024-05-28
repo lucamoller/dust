@@ -357,7 +357,6 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
     // Apply Updates
     //
     let apply_updates_enum_update_match = fields.iter().map(|field| {
-        // eprintln!("field: {:#?}", field);
         let field_ident = &field.ident;
         let enum_ident = field_to_enum(&field.ident.clone().unwrap());
         quote! {
@@ -433,7 +432,7 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         }
 
         impl #state_struct {
-            pub fn provide_and_initiaze_context() {
+            pub fn provide_and_initialize_context() {
                 let state = std::rc::Rc::new(#internal_mod::DustContext::from_default_state());
                 ::dust::leptos::provide_context(state.clone());
                 ::dust::leptos::create_effect(move |_| {

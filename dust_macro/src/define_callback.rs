@@ -3,6 +3,11 @@ use quote::quote;
 use syn::parse_macro_input;
 use crate::enum_utils::field_to_enum;
 
+pub enum MacroCallbackType {
+    Server,
+    Client,
+}
+
 enum CallbackArgType {
     Input,
     Output,
@@ -45,8 +50,7 @@ fn get_arg_type(arg: &syn::FnArg) -> CallbackArgType {
     );
 }
 
-
-pub fn dust_define_callback(args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn define_callback(args: TokenStream, input: TokenStream, _callback_type: MacroCallbackType) -> TokenStream {
     let state_struct = parse_macro_input!(args as syn::Ident);
     let function = parse_macro_input!(input as syn::Item);
 
@@ -171,8 +175,8 @@ pub fn dust_define_callback(args: TokenStream, input: TokenStream) -> TokenStrea
     let function_name_str = format!("{}", function_name);
 
     let get_info_fn = quote! {
-        fn #get_info_name() ->  <#state_struct as dust::StateTypes>::CallbackInfo{
-            <#state_struct as dust::StateTypes>::CallbackInfo::new(
+        fn #get_info_name() ->  <#state_struct as dust::StateTypes>::Callback{
+            <#state_struct as dust::StateTypes>::Callback::new(
                 #function_name_str,
                 #[cfg(feature = "ssr")]
                 Some(#wrapper_name),
@@ -180,6 +184,7 @@ pub fn dust_define_callback(args: TokenStream, input: TokenStream) -> TokenStrea
                 None,
                 vec![#(#input_entries,)*],
                 vec![#(#output_entries,)*],
+                ::dust::CallbackType::Server,
             )
         }
     };

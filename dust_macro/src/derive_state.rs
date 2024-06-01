@@ -316,32 +316,6 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         }
     };
 
-    //
-    // CallbackInfo
-    //
-    let dust_callback_info = quote! {
-        #[derive(Clone)]
-        pub struct CallbackInfo {
-            pub name: &'static str,
-            pub cb: fn(&mut super::#state_struct) -> Vec<Value>,
-            pub inputs: Vec<Identifier>,
-            pub outputs: Vec<Identifier>,
-        }
-
-        impl CallbackInfo {
-            pub fn new(
-                name: &'static str,
-                cb: fn(&mut super::#state_struct) -> Vec<Value>,
-                inputs: Vec<Identifier>,
-                outputs: Vec<Identifier>
-            ) -> CallbackInfo {
-                CallbackInfo{
-                    name, cb, inputs, outputs
-                }
-            }
-        }
-    };
-
     let registered_callbacks = attributes.callbacks.iter().map(|callback_tokens| {
         let callback_get_info_ident = syn::Ident::new(
             &format!("{}_get_info", callback_tokens),
@@ -374,8 +348,6 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
             #dust_value_enum
 
             #dust_context
-
-            #dust_callback_info
 
             pub static EXECUTOR: ::dust::once_cell::sync::Lazy<
                 ::dust::Executor<Identifier, Value, super::#state_struct>,
@@ -414,7 +386,7 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         }
 
         impl #state_struct {
-            pub fn get_registered_callbacks() -> Vec<::dust::StateCallback<#internal_mod::Identifier, #internal_mod::Value, #state_struct>> {
+            pub fn get_registered_callbacks() -> Vec<::dust::Callback<#internal_mod::Identifier, #internal_mod::Value, #state_struct>> {
                 return vec![#(#registered_callbacks,)*];
             }
         }
@@ -423,7 +395,7 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
             // Associated type definition
             type Identifier = #internal_mod::Identifier;
             type Value = #internal_mod::Value;
-            type CallbackInfo = ::dust::StateCallback<
+            type Callback = ::dust::Callback<
                 #internal_mod::Identifier, 
                 #internal_mod::Value, 
                 #state_struct

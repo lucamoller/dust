@@ -6,7 +6,9 @@ use std::hash::Hash;
 pub mod file_handler;
 pub mod serve;
 
-pub use dust_macro::{dust_define_callback, dust_lib, dust_main, DustState};
+pub use dust_macro::{
+    dust_define_client_callback, dust_define_server_callback, dust_lib, dust_main, DustState,
+};
 
 // Re-exports
 pub use console_error_panic_hook;
@@ -54,30 +56,39 @@ impl<T: Clone> Output<T> {
 }
 
 #[derive(Clone)]
-pub struct StateCallback<I, V, S> {
+pub enum CallbackType {
+    Server,
+    Client,
+}
+
+#[derive(Clone)]
+pub struct Callback<I, V, S> {
     pub name: &'static str,
     pub cb: Option<fn(&mut S) -> Vec<V>>,
     pub inputs: Vec<I>,
     pub outputs: Vec<I>,
+    pub cb_type: CallbackType,
 }
 
-impl<I, S, V> StateCallback<I, V, S> {
+impl<I, S, V> Callback<I, V, S> {
     pub fn new(
         name: &'static str,
         cb: Option<fn(&mut S) -> Vec<V>>,
         inputs: Vec<I>,
         outputs: Vec<I>,
+        cb_type: CallbackType,
     ) -> Self {
         Self {
             name,
             cb,
             inputs,
             outputs,
+            cb_type,
         }
     }
 }
 
-impl<I, S, V> std::hash::Hash for StateCallback<I, V, S> {
+impl<I, S, V> std::hash::Hash for Callback<I, V, S> {
     fn hash<H>(&self, state: &mut H)
     where
         H: std::hash::Hasher,
@@ -87,26 +98,26 @@ impl<I, S, V> std::hash::Hash for StateCallback<I, V, S> {
     }
 }
 
-impl<I, V, S> PartialEq for StateCallback<I, V, S> {
-    fn eq(&self, other: &StateCallback<I, V, S>) -> bool {
+impl<I, V, S> PartialEq for Callback<I, V, S> {
+    fn eq(&self, other: &Callback<I, V, S>) -> bool {
         return self.name == other.name;
     }
 }
 
 #[derive(Clone)]
-pub struct StateCallbackWithId<I, V, S> {
+pub struct CallbackWithId<I, V, S> {
     pub id: usize,
-    pub callback: StateCallback<I, V, S>,
+    pub callback: Callback<I, V, S>,
 }
 
 pub trait StateTypes {
     type Identifier;
     type Value;
-    type CallbackInfo;
+    type Callback;
     type Context;
 }
 
-impl<I, V, S> Eq for StateCallback<I, V, S> {}
+impl<I, V, S> Eq for Callback<I, V, S> {}
 
 pub trait ValueToIdentifier<I> {
     fn to_identifier(&self) -> I;
@@ -117,7 +128,7 @@ pub trait ApplyUpdates<V> {
 }
 
 pub struct Executor<I, V, S> {
-    callbacks: Vec<StateCallbackWithId<I, V, S>>,
+    callbacks: Vec<CallbackWithId<I, V, S>>,
     input_to_callbacks: HashMap<I, Vec<usize>>,
     // Maps callback ids to the ids of callbacks that are immediately triggered by them.
     callback_to_dependants: HashMap<usize, Vec<usize>>,
@@ -141,10 +152,10 @@ where
         return app;
     }
 
-    pub fn register_callback(&mut self, callback: StateCallback<I, V, S>) {
+    pub fn register_callback(&mut self, callback: Callback<I, V, S>) {
         let id = self.callbacks.len();
 
-        self.callbacks.push(StateCallbackWithId {
+        self.callbacks.push(CallbackWithId {
             id: id,
             callback: callback,
         });

@@ -6,11 +6,17 @@ mod dust_lib;
 mod dust_main;
 mod enum_utils;
 
+use define_callback::MacroCallbackType;
 use proc_macro::TokenStream;
 
 #[proc_macro_attribute]
-pub fn dust_define_callback(args: TokenStream, input: TokenStream) -> TokenStream {
-   return define_callback::dust_define_callback(args, input);
+pub fn dust_define_server_callback(args: TokenStream, input: TokenStream) -> TokenStream {
+   return define_callback::define_callback(args, input, MacroCallbackType::Server);
+}
+
+#[proc_macro_attribute]
+pub fn dust_define_client_callback(args: TokenStream, input: TokenStream) -> TokenStream {
+   return define_callback::define_callback(args, input, MacroCallbackType::Client);
 }
 
 #[proc_macro_derive(

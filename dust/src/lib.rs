@@ -5,6 +5,9 @@ use std::hash::Hash;
 
 pub mod file_handler;
 pub mod serve;
+mod context;
+pub use context::*;
+
 
 pub use dust_macro::{
     dust_define_client_callback, dust_define_server_callback, dust_lib, dust_main, DustState,
@@ -31,27 +34,24 @@ pub struct Input<T> {
 }
 
 #[derive(Clone, Copy)]
-pub enum OutputState {
+pub enum OutputState<T> {
     NoChange,
-    Updated,
+    Updated(T),
 }
 
 pub struct Output<T> {
-    pub value: T,
-    pub state: OutputState,
+    pub state: OutputState<T>,
 }
 
 impl<T: Clone> Output<T> {
-    pub fn new(value: T) -> Output<T> {
+    pub fn new() -> Output<T> {
         Output {
-            value: value,
             state: OutputState::NoChange,
         }
     }
 
     pub fn set(&mut self, value: T) {
-        self.value = value;
-        self.state = OutputState::Updated;
+        self.state = OutputState::Updated(value);
     }
 }
 
@@ -62,18 +62,18 @@ pub enum CallbackType {
 }
 
 #[derive(Clone)]
-pub struct Callback<I, V, S> {
+pub struct Callback<I, V> {
     pub name: &'static str,
-    pub cb: Option<fn(&mut S) -> Vec<V>>,
+    pub cb: Option<fn(&HashMap<I, V>) -> Vec<V>>,
     pub inputs: Vec<I>,
     pub outputs: Vec<I>,
     pub cb_type: CallbackType,
 }
 
-impl<I, S, V> Callback<I, V, S> {
+impl<I, V> Callback<I, V> {
     pub fn new(
         name: &'static str,
-        cb: Option<fn(&mut S) -> Vec<V>>,
+        cb: Option<fn(&HashMap<I, V>) -> Vec<V>>,
         inputs: Vec<I>,
         outputs: Vec<I>,
         cb_type: CallbackType,
@@ -88,7 +88,7 @@ impl<I, S, V> Callback<I, V, S> {
     }
 }
 
-impl<I, S, V> std::hash::Hash for Callback<I, V, S> {
+impl<I, V> std::hash::Hash for Callback<I, V> {
     fn hash<H>(&self, state: &mut H)
     where
         H: std::hash::Hasher,
@@ -98,37 +98,31 @@ impl<I, S, V> std::hash::Hash for Callback<I, V, S> {
     }
 }
 
-impl<I, V, S> PartialEq for Callback<I, V, S> {
-    fn eq(&self, other: &Callback<I, V, S>) -> bool {
+impl<I, V> PartialEq for Callback<I, V> {
+    fn eq(&self, other: &Callback<I, V>) -> bool {
         return self.name == other.name;
     }
 }
 
 #[derive(Clone)]
-pub struct CallbackWithId<I, V, S> {
+pub struct CallbackWithId<I, V> {
     pub id: usize,
-    pub callback: Callback<I, V, S>,
+    pub callback: Callback<I, V>,
 }
 
 pub trait StateTypes {
     type Identifier;
     type Value;
-    type Callback;
-    type Context;
 }
 
-impl<I, V, S> Eq for Callback<I, V, S> {}
+impl<I, V> Eq for Callback<I, V> {}
 
 pub trait ValueToIdentifier<I> {
     fn to_identifier(&self) -> I;
 }
 
-pub trait ApplyUpdates<V> {
-    fn apply_updates(&mut self, updates: &Vec<V>);
-}
-
-pub struct Executor<I, V, S> {
-    callbacks: Vec<CallbackWithId<I, V, S>>,
+pub struct Executor<I, V> {
+    callbacks: Vec<CallbackWithId<I, V>>,
     input_to_callbacks: HashMap<I, Vec<usize>>,
     // Maps callback ids to the ids of callbacks that are immediately triggered by them.
     callback_to_dependants: HashMap<usize, Vec<usize>>,
@@ -136,13 +130,12 @@ pub struct Executor<I, V, S> {
     callback_to_topological_rank: HashMap<usize, usize>,
 }
 
-impl<I, V, S> Executor<I, V, S>
+impl<I, V> Executor<I, V>
 where
     I: Hash + PartialEq + Eq + Clone + Copy,
     V: Clone + std::fmt::Debug + ValueToIdentifier<I>,
-    S: Clone + Default + ApplyUpdates<V>,
 {
-    pub fn new() -> Executor<I, V, S> {
+    pub fn new() -> Executor<I, V> {
         let app = Executor {
             callbacks: Vec::new(),
             input_to_callbacks: HashMap::new(),
@@ -152,7 +145,7 @@ where
         return app;
     }
 
-    pub fn register_callback(&mut self, callback: Callback<I, V, S>) {
+    pub fn register_callback(&mut self, callback: Callback<I, V>) {
         let id = self.callbacks.len();
 
         self.callbacks.push(CallbackWithId {
@@ -352,9 +345,16 @@ where
     }
 
     pub fn process_updates(&self, input_updates: Vec<V>, required_state: Vec<V>) -> Vec<V> {
-        let mut state = S::default();
-        state.apply_updates(&required_state);
-        state.apply_updates(&input_updates);
+        let mut state: HashMap<I, V> = HashMap::new();
+
+        for value in required_state.iter() {
+            let identifier = value.to_identifier();
+            state.insert(identifier, value.clone());
+        }
+        for value in input_updates.iter() {
+            let identifier = value.to_identifier();
+            state.insert(identifier, value.clone());
+        }
 
         let updated_inputs = input_updates.iter().map(|v| v.to_identifier()).collect();
         let execution_plan = self.get_execution_plan(&updated_inputs);
@@ -363,8 +363,11 @@ where
         for id in execution_plan.iter() {
             let callback = &self.callbacks[*id].callback;
 
-            let mut new_updates = (callback.cb.unwrap())(&mut state);
-            state.apply_updates(&new_updates);
+            let mut new_updates = (callback.cb.unwrap())(&state);
+            for value in new_updates.iter() {
+                let identifier = value.to_identifier();
+                state.insert(identifier, value.clone());
+            }
             output_updates.append(&mut new_updates);
         }
 

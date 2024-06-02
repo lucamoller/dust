@@ -1,15 +1,16 @@
+use crate::enum_utils::field_to_enum;
 use convert_case::{Case, Casing};
+use once_cell::sync::Lazy;
 use proc_macro::TokenStream;
 use quote::quote;
+use std::collections::HashSet;
 use syn::spanned::Spanned;
 use syn::{parse_macro_input, DeriveInput};
-use crate::enum_utils::field_to_enum;
-use std::collections::HashSet;
-use once_cell::sync::Lazy;
 
-static INCREMENTABLE_TYPES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    HashSet::from(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"])
-});
+static INCREMENTABLE_TYPES: Lazy<HashSet<&'static str>> =
+    Lazy::new(|| HashSet::from(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]));
+
+type Fields = syn::punctuated::Punctuated<syn::Field, syn::token::Comma>;
 
 struct DustStateAttributes {
     callbacks: Vec<proc_macro2::TokenStream>,
@@ -38,29 +39,7 @@ impl DustStateAttributes {
     }
 }
 
-pub fn derive_state(input: TokenStream) -> TokenStream {
-    let ast = parse_macro_input!(input as DeriveInput);
-    let attributes = DustStateAttributes::from_input(&ast);
-
-    let state_struct = &ast.ident;
-    let internal_mod = syn::Ident::new(
-        format!("{}Internal", state_struct).as_str().to_case(Case::Snake).as_str(), 
-        state_struct.span()
-    );
-
-    let fields = if let syn::Data::Struct(syn::DataStruct {
-        fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
-        ..
-    }) = ast.data
-    {
-        named
-    } else {
-        unimplemented!();
-    };
-
-    //
-    // Identifier Enum
-    //
+fn generate_identifier_enum(fields: &Fields) -> proc_macro2::TokenStream {
     let identifier_enum_entries = fields.iter().map(|field| {
         let entry_ident = field_to_enum(&field.ident.clone().unwrap());
         quote! {
@@ -68,16 +47,15 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         }
     });
 
-    let dust_identifier_enum = quote! {
+    return quote! {
         #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
         pub enum Identifier {
             #(#identifier_enum_entries,)*
         }
     };
+}
 
-    //
-    // Value Enum
-    //
+fn generate_value_enum(fields: &Fields) -> proc_macro2::TokenStream {
     let value_enum_entries = fields.iter().map(|field| {
         let entry_ident = field_to_enum(&field.ident.clone().unwrap());
         let entry_inner_type = &field.ty;
@@ -93,15 +71,7 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         }
     });
 
-    let identifier_to_value_from_signal_entries = fields.iter().map(|field| {
-        let field_ident = &field.ident;
-        let entry_ident = field_to_enum(&field.ident.clone().unwrap());
-        quote! {
-            Identifier::#entry_ident => Value::#entry_ident(self.#field_ident.get_untracked())
-        }
-    });
-
-    let dust_value_enum = quote! {
+    return quote! {
         #[derive(Clone, Debug, ::dust::serde::Serialize, ::dust::serde::Deserialize)]
         pub enum Value {
             #(#value_enum_entries,)*
@@ -115,10 +85,38 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
             }
         }
     };
+}
 
-    //
-    // Context
-    //
+fn generate_executor(state_struct: &syn::Ident) -> proc_macro2::TokenStream {
+    return quote! {
+        pub static EXECUTOR: ::dust::once_cell::sync::Lazy<
+            ::dust::Executor<Identifier, Value>,
+        > = ::dust::once_cell::sync::Lazy::new(|| {
+            let mut app = ::dust::Executor::new();
+            for callback in super::#state_struct::get_registered_callbacks() {
+                app.register_callback(callback);
+            }
+            app.init_callbacks();
+            app
+        });
+
+        #[::leptos::server(ServerCallback, "/server_callback", "Cbor")]
+        pub async fn execute_server_callbacks(
+            input_updates: Vec<Value>,
+            required_state: Vec<Value>,
+        ) -> Result<Vec<Value>, ::dust::leptos::ServerFnError> {
+            println!(
+                "server_callback input_updates: {:?} required_state {:?}",
+                input_updates, required_state
+            );
+
+            let output_updates = EXECUTOR.process_updates(input_updates, required_state);
+            Ok(output_updates)
+        }
+    };
+}
+
+fn generate_context(state_struct: &syn::Ident, fields: &Fields) -> proc_macro2::TokenStream {
     let signal_fields = fields.iter().map(|field| {
         let field_ident = &field.ident;
         let signal_write_ident = syn::Ident::new(
@@ -174,13 +172,17 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         }
     });
 
+    let identifier_to_value_from_signal_entries = fields.iter().map(|field| {
+        let field_ident = &field.ident;
+        let entry_ident = field_to_enum(&field.ident.clone().unwrap());
+        quote! {
+            Identifier::#entry_ident => Value::#entry_ident(self.#field_ident.get_untracked())
+        }
+    });
+
     let signal_fields_setter_getter = fields.iter().map(|field| {
         let field_ident = &field.ident;
         let field_type = &field.ty;
-        // let getter_ident = syn::Ident::new(
-        //     &format!("get_{}", field_ident.clone().unwrap()),
-        //     field_ident.span(),
-        // );
         let setter_ident = syn::Ident::new(
             &format!("set_{}", field_ident.clone().unwrap()),
             field_ident.span(),
@@ -227,95 +229,70 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
             }
 
             #increment_onclick
-
         }
     });
 
-    let dust_context = quote! {
-        #[derive(Clone, Debug)]
-        struct ContextInternalState {
-            initialized: std::cell::Cell<bool>,
-        }
-
-        #[derive(Clone, Debug)]
-        pub struct DustContext {
+    return quote! {
+        #[derive(Debug)]
+        pub struct ContextImpl {
             #(#signal_fields)*
 
-            context_internal_state: ContextInternalState,
+            context_manager: ::dust::ContextManager<Identifier>,
         }
 
-        impl DustContext {
-            pub fn from_default_state() -> Self {
+        impl ::dust::Context for ContextImpl {
+            type I = Identifier;
+            type V = Value;
+
+            fn from_default_state() -> Self {
                 let state = super::#state_struct::default();
                 #(#signal_variables_definition)*
                 Self {
                     #(#signal_fields_initialization)*
 
-                    context_internal_state: ContextInternalState {
-                        initialized: std::cell::Cell::new(false),
-                    },
+                    context_manager: ::dust::ContextManager::new(),
                 }
             }
 
-            pub fn get_values_from_identifiers(
-                &self, identifiers: &std::collections::HashSet<Identifier>
-            ) -> Vec<Value> {
-                identifiers.iter().map(|value_ident| {
-                    match *value_ident {
-                        #(#identifier_to_value_from_signal_entries,)*
-                    }
-                }).collect()
+            fn update_value(&self, value: Self::V) {
+                match value {
+                    #(#signal_fields_update,)*
+                };
             }
 
-            pub fn apply_updates(&self, updates: Vec<Value>) {
-                for update in updates {
-                    match update {
-                        #(#signal_fields_update,)*
-                    }
-                }
+            fn read_value(&self, identifier: &Self::I) -> Self::V {
+                return match *identifier {
+                    #(#identifier_to_value_from_signal_entries,)*
+                };
             }
 
+            fn get_manager(&self) -> &::dust::ContextManager<Self::I> {
+                return &self.context_manager;
+            }
+
+            fn get_executor() -> &'static ::dust::Executor<Self::I, Self::V> {
+                return ::dust::once_cell::sync::Lazy::force(&EXECUTOR);
+            }
+
+            fn execute_server_callbacks(
+                input_updates: Vec<Self::V>,
+                required_state: Vec<Self::V>,
+            ) -> impl std::future::Future<Output = Result<Vec<Self::V>, ::leptos::ServerFnError>> + Send {
+                return execute_server_callbacks(input_updates, required_state);
+            }
+        }
+
+        impl ContextImpl {
             #(#signal_fields_setter_getter)*
-
-            pub fn initialize_state(self: &std::rc::Rc<Self>){
-                ::dust::leptos::logging::log!("initialize_state");
-                self.context_internal_state.initialized.set(true);
-                self.handle_updates(
-                    self.get_values_from_identifiers(
-                        &EXECUTOR.get_required_initialization_inputs()
-                    )
-                );
-            }
-
-            pub fn handle_updates(self: &std::rc::Rc<Self>, input_updates: Vec<Value>) {
-                let updated_inputs = input_updates.iter().map(|v| v.to_identifier()).collect();
-                let execution_plan = EXECUTOR.get_execution_plan(&updated_inputs);
-                let required_state = EXECUTOR.get_required_state(&updated_inputs, &execution_plan);
-                let required_state_values = self.get_values_from_identifiers(&required_state);
-
-                ::dust::leptos::logging::log!("handle_updates call");
-                ::dust::leptos::logging::log!("  input_updates: {:?}", input_updates);
-                ::dust::leptos::logging::log!("  execution_plan: {:?}", execution_plan);
-                ::dust::leptos::logging::log!("  required_state_values: {:?}", required_state_values);
-
-                let state = self.clone();
-                ::dust::leptos::spawn_local(async move {
-                    let response = server_callback(input_updates, required_state_values).await;
-                    match response {
-                        Ok(output_updates) => {
-                            ::dust::leptos::logging::log!("    server output_updates: {:?}", output_updates);
-                            state.apply_updates(output_updates);
-                        }
-                        Err(e) => {
-                            ::dust::leptos::logging::log!("server_callback error: {}", e);
-                        }
-                    }
-                });
-            }
-
         }
     };
+}
 
+fn generate_get_registered_callbacks(
+    state_struct: &syn::Ident,
+    internal_mod: &syn::Ident,
+    attributes: &DustStateAttributes,
+) -> proc_macro2::TokenStream {
     let registered_callbacks = attributes.callbacks.iter().map(|callback_tokens| {
         let callback_get_info_ident = syn::Ident::new(
             &format!("{}_get_info", callback_tokens),
@@ -327,94 +304,81 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         }
     });
 
-    //
-    // Apply Updates
-    //
-    let apply_updates_enum_update_match = fields.iter().map(|field| {
-        let field_ident = &field.ident;
-        let enum_ident = field_to_enum(&field.ident.clone().unwrap());
-        quote! {
-            #internal_mod::Value::#enum_ident(v) => {self.#field_ident = v.clone();}
+    return quote! {
+        impl #state_struct {
+            pub fn get_registered_callbacks() -> Vec<::dust::Callback<#internal_mod::Identifier,
+                                                                      #internal_mod::Value>> {
+                return vec![#(#registered_callbacks,)*];
+            }
         }
-    });
+    };
+}
+
+pub fn derive_state(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    let attributes = DustStateAttributes::from_input(&ast);
+
+    let state_struct = &ast.ident;
+    let internal_mod = syn::Ident::new(
+        format!("{}Internal", state_struct)
+            .as_str()
+            .to_case(Case::Snake)
+            .as_str(),
+        state_struct.span(),
+    );
+
+    let fields = if let syn::Data::Struct(syn::DataStruct {
+        fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
+        ..
+    }) = ast.data
+    {
+        named
+    } else {
+        unimplemented!();
+    };
+
+    let identifier_enum = generate_identifier_enum(fields);
+    let value_enum = generate_value_enum(fields);
+    let executor = generate_executor(state_struct);
+    let context = generate_context(state_struct, fields);
+
+    let get_registered_callbacks =
+        generate_get_registered_callbacks(state_struct, &internal_mod, &attributes);
 
     quote! {
         mod #internal_mod {
             use ::dust::*;  // Get traits in scope.
             use ::dust::leptos::*;  // Get traits in scope.
 
-            #dust_identifier_enum
+            #identifier_enum
 
-            #dust_value_enum
+            #value_enum
 
-            #dust_context
+            #executor
 
-            pub static EXECUTOR: ::dust::once_cell::sync::Lazy<
-                ::dust::Executor<Identifier, Value, super::#state_struct>,
-            > = ::dust::once_cell::sync::Lazy::new(|| {
-                let mut app = ::dust::Executor::new();
-                for callback in super::#state_struct::get_registered_callbacks() {
-                    app.register_callback(callback);
-                }
-                app.init_callbacks();
-                app
-            });
-
-            #[::leptos::server(ServerCallback, "/server_callback", "Cbor")]
-            pub async fn server_callback(
-                input_updates: Vec<Value>,
-                required_state: Vec<Value>,
-            ) -> Result<Vec<Value>, ::dust::leptos::ServerFnError> {
-                println!(
-                    "server_callback input_updates: {:?} required_state {:?}",
-                    input_updates, required_state
-                );
-
-                let output_updates = EXECUTOR.process_updates(input_updates, required_state);
-                Ok(output_updates)
-            }
+            #context
         }
 
-        impl ::dust::ApplyUpdates<#internal_mod::Value> for #state_struct {
-            fn apply_updates(&mut self, updates: &Vec<#internal_mod::Value>) {
-                for update in updates.iter() {
-                    match update {
-                        #(#apply_updates_enum_update_match,)*
-                    };
-                }
-            }
-        }
-
-        impl #state_struct {
-            pub fn get_registered_callbacks() -> Vec<::dust::Callback<#internal_mod::Identifier, #internal_mod::Value, #state_struct>> {
-                return vec![#(#registered_callbacks,)*];
-            }
-        }
+        #get_registered_callbacks
 
         impl ::dust::StateTypes for #state_struct {
             // Associated type definition
             type Identifier = #internal_mod::Identifier;
             type Value = #internal_mod::Value;
-            type Callback = ::dust::Callback<
-                #internal_mod::Identifier, 
-                #internal_mod::Value, 
-                #state_struct
-            >;
-            type Context = std::rc::Rc<#internal_mod::DustContext>;
         }
 
+        impl ::dust::ContextProvider for #state_struct {
+            type C = #internal_mod::ContextImpl;
+        }
+
+        // Expose ContextProvider methods directly to avoid requiring importing the trait.
         impl #state_struct {
             pub fn provide_and_initialize_context() {
-                let state = std::rc::Rc::new(#internal_mod::DustContext::from_default_state());
-                ::dust::leptos::provide_context(state.clone());
-                ::dust::leptos::create_effect(move |_| {
-                    log!("Initializing state...");
-                    state.initialize_state();
-                });
+                <Self as ::dust::ContextProvider>::provide_and_initialize_context();
             }
 
-            pub fn expect_context() -> std::rc::Rc<#internal_mod::DustContext> {
-                return ::dust::leptos::expect_context::<std::rc::Rc<#internal_mod::DustContext>>();
+            pub fn expect_context() -> std::rc::Rc<#internal_mod::ContextImpl> {
+                return <Self as ::dust::ContextProvider>::expect_context();
             }
         }
     }

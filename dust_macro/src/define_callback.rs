@@ -1,7 +1,7 @@
+use crate::enum_utils::field_to_enum;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse_macro_input;
-use crate::enum_utils::field_to_enum;
 
 pub enum MacroCallbackType {
     Server,
@@ -50,7 +50,11 @@ fn get_arg_type(arg: &syn::FnArg) -> CallbackArgType {
     );
 }
 
-pub fn define_callback(args: TokenStream, input: TokenStream, _callback_type: MacroCallbackType) -> TokenStream {
+pub fn define_callback(
+    args: TokenStream,
+    input: TokenStream,
+    _callback_type: MacroCallbackType,
+) -> TokenStream {
     let state_struct = parse_macro_input!(args as syn::Ident);
     let function = parse_macro_input!(input as syn::Item);
 
@@ -99,7 +103,7 @@ pub fn define_callback(args: TokenStream, input: TokenStream, _callback_type: Ma
     let output_variables = outputs.iter().map(|cb| {
         let name_ident = &cb.name_ident;
         quote! {
-            let mut #name_ident = Output::new(app.#name_ident.clone());
+            let mut #name_ident = Output::new();
         }
     });
 
@@ -107,9 +111,17 @@ pub fn define_callback(args: TokenStream, input: TokenStream, _callback_type: Ma
         let name_ident = &cb.name_ident;
         match cb.arg_type {
             CallbackArgType::Input => {
+                let enum_ident = field_to_enum(name_ident);
                 quote! {
                     Input {
-                        value: app.#name_ident.clone(),
+                        value: if let Value::#enum_ident(v) = state.get(
+                            &<#state_struct as ::dust::StateTypes>::Identifier::#enum_ident).unwrap().clone() {
+                                v
+                            }
+                        else {
+                            panic!("Failed to unwrap value enum for {:?}!", 
+                                   <#state_struct as ::dust::StateTypes>::Identifier::#enum_ident)
+                        },
                     }
                 }
             }
@@ -125,9 +137,9 @@ pub fn define_callback(args: TokenStream, input: TokenStream, _callback_type: Ma
             let enum_ident = field_to_enum(name_ident);
             quote! {
                 match #name_ident.state {
-                    dust::OutputState::NoChange => None,
-                    dust::OutputState::Updated => Some(
-                        <#state_struct as dust::StateTypes>::Value::#enum_ident(#name_ident.value.clone())
+                    ::dust::OutputState::NoChange => None,
+                    ::dust::OutputState::Updated(value) => Some(
+                        <#state_struct as ::dust::StateTypes>::Value::#enum_ident(value.clone())
                     ),
                 }
             }
@@ -146,7 +158,12 @@ pub fn define_callback(args: TokenStream, input: TokenStream, _callback_type: Ma
 
     let wrapper_name = syn::Ident::new(&format!("{}_wrapper", function_name), function_name.span());
     let wrapper = quote! {
-        fn #wrapper_name(app: &mut #state_struct) -> Vec<<#state_struct as dust::StateTypes>::Value> {
+        fn #wrapper_name(
+            state: &::std::collections::HashMap<<#state_struct as ::dust::StateTypes>::Identifier,
+                                                <#state_struct as ::dust::StateTypes>::Value>
+        ) -> Vec<<#state_struct as ::dust::StateTypes>::Value> {
+            type Value = <#state_struct as ::dust::StateTypes>::Value;
+
             #(#output_variables)*
             #function_name(#(
                 #call_args,
@@ -159,14 +176,14 @@ pub fn define_callback(args: TokenStream, input: TokenStream, _callback_type: Ma
         let input_ident = &arg.name_ident;
         let input_enum = field_to_enum(input_ident);
         quote! {
-            <#state_struct as dust::StateTypes>::Identifier::#input_enum
+            <#state_struct as ::dust::StateTypes>::Identifier::#input_enum
         }
     });
     let output_entries = outputs.iter().map(|arg| {
         let output_ident = &arg.name_ident;
         let output_enum = field_to_enum(output_ident);
         quote! {
-            <#state_struct as dust::StateTypes>::Identifier::#output_enum
+            <#state_struct as ::dust::StateTypes>::Identifier::#output_enum
         }
     });
 
@@ -175,8 +192,8 @@ pub fn define_callback(args: TokenStream, input: TokenStream, _callback_type: Ma
     let function_name_str = format!("{}", function_name);
 
     let get_info_fn = quote! {
-        fn #get_info_name() ->  <#state_struct as dust::StateTypes>::Callback{
-            <#state_struct as dust::StateTypes>::Callback::new(
+        fn #get_info_name() ->  ::dust::Callback<<#state_struct as ::dust::StateTypes>::Identifier, <#state_struct as ::dust::StateTypes>::Value>{
+            ::dust::Callback::new(
                 #function_name_str,
                 #[cfg(feature = "ssr")]
                 Some(#wrapper_name),
@@ -195,7 +212,7 @@ pub fn define_callback(args: TokenStream, input: TokenStream, _callback_type: Ma
 
         #[cfg(feature = "ssr")]
         #wrapper
-        
+
         #get_info_fn
     }
     .into()

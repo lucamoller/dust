@@ -50,56 +50,33 @@ fn get_arg_type(arg: &syn::FnArg) -> CallbackArgType {
     );
 }
 
-pub fn define_callback(
-    args: TokenStream,
-    input: TokenStream,
-    _callback_type: MacroCallbackType,
-) -> TokenStream {
-    let state_struct = parse_macro_input!(args as syn::Ident);
-    let function = parse_macro_input!(input as syn::Item);
+fn get_callback_args(item: &syn::Item) -> Vec<CallbackArg> {
+    let mut result = Vec::new();
+    if let syn::Item::Fn(syn::ItemFn {
+        sig: syn::Signature { inputs, .. },
+        ..
+    }) = item
+    {
+        for arg in inputs {
+            let arg_name = get_arg_name_ident(arg);
+            let arg_type = get_arg_type(arg);
 
-    let function_name = if let syn::Item::Fn(syn::ItemFn { ref sig, .. }) = function {
-        sig.ident.clone()
-    } else {
-        panic!("missing function name")
-    };
-
-    let get_callback_args = |item: &syn::Item| -> Vec<CallbackArg> {
-        let mut result = Vec::new();
-        if let syn::Item::Fn(syn::ItemFn {
-            sig: syn::Signature { inputs, .. },
-            ..
-        }) = item
-        {
-            for arg in inputs {
-                let arg_name = get_arg_name_ident(arg);
-                let arg_type = get_arg_type(arg);
-
-                result.push(CallbackArg {
-                    name_ident: arg_name,
-                    arg_type: arg_type,
-                });
-            }
+            result.push(CallbackArg {
+                name_ident: arg_name,
+                arg_type: arg_type,
+            });
         }
-        result
-    };
+    }
+    return result;
+}
 
-    let callback_args = get_callback_args(&function);
-    let inputs: Vec<&CallbackArg> = callback_args
-        .iter()
-        .filter_map(|cb| match cb.arg_type {
-            CallbackArgType::Input => Some(cb),
-            _ => None,
-        })
-        .collect();
-    let outputs: Vec<&CallbackArg> = callback_args
-        .iter()
-        .filter_map(|cb| match cb.arg_type {
-            CallbackArgType::Output => Some(cb),
-            _ => None,
-        })
-        .collect();
-
+fn generate_wrapper_fn(
+    state_struct: &syn::Ident,
+    function_name: &syn::Ident,
+    wrapper_name: &syn::Ident,
+    callback_args: &Vec<CallbackArg>,
+    outputs: &Vec<&CallbackArg>,
+) -> proc_macro2::TokenStream {
     let output_variables = outputs.iter().map(|cb| {
         let name_ident = &cb.name_ident;
         quote! {
@@ -156,8 +133,7 @@ pub fn define_callback(
         }
     };
 
-    let wrapper_name = syn::Ident::new(&format!("{}_wrapper", function_name), function_name.span());
-    let wrapper = quote! {
+    return quote! {
         fn #wrapper_name(
             state: &::std::collections::HashMap<<#state_struct as ::dust::StateTypes>::Identifier,
                                                 <#state_struct as ::dust::StateTypes>::Value>
@@ -171,7 +147,16 @@ pub fn define_callback(
             return #collect_updates;
         }
     };
+}
 
+fn generate_get_info_fn(
+    state_struct: &syn::Ident,
+    function_name: &syn::Ident,
+    wrapper_name: &syn::Ident,
+    inputs: &Vec<&CallbackArg>,
+    outputs: &Vec<&CallbackArg>,
+    callback_type: &MacroCallbackType,
+) -> proc_macro2::TokenStream {
     let input_entries = inputs.iter().map(|arg| {
         let input_ident = &arg.name_ident;
         let input_enum = field_to_enum(input_ident);
@@ -191,27 +176,95 @@ pub fn define_callback(
         syn::Ident::new(&format!("{}_get_info", function_name), function_name.span());
     let function_name_str = format!("{}", function_name);
 
-    let get_info_fn = quote! {
-        fn #get_info_name() ->  ::dust::Callback<<#state_struct as ::dust::StateTypes>::Identifier, <#state_struct as ::dust::StateTypes>::Value>{
-            ::dust::Callback::new(
-                #function_name_str,
-                #[cfg(feature = "ssr")]
-                Some(#wrapper_name),
-                #[cfg(not(feature = "ssr"))]
-                None,
-                vec![#(#input_entries,)*],
-                vec![#(#output_entries,)*],
-                ::dust::CallbackType::Server,
-            )
+    return match *callback_type {
+        MacroCallbackType::Server => {
+            quote! {
+                fn #get_info_name() -> ::dust::Callback<<#state_struct as ::dust::StateTypes>::Identifier,
+                                                        <#state_struct as ::dust::StateTypes>::Value> {
+                    ::dust::Callback::new(
+                        #function_name_str,
+                        #[cfg(feature = "ssr")]
+                        Some(#wrapper_name),
+                        #[cfg(not(feature = "ssr"))]
+                        None,
+                        vec![#(#input_entries,)*],
+                        vec![#(#output_entries,)*],
+                        ::dust::CallbackType::Server,
+                    )
+                }
+            }
+        }
+        MacroCallbackType::Client => {
+            quote! {
+                fn #get_info_name() ->  ::dust::Callback<<#state_struct as ::dust::StateTypes>::Identifier,
+                                                         <#state_struct as ::dust::StateTypes>::Value>{
+                    ::dust::Callback::new(
+                        #function_name_str,
+                        Some(#wrapper_name),
+                        vec![#(#input_entries,)*],
+                        vec![#(#output_entries,)*],
+                        ::dust::CallbackType::Client,
+                    )
+                }
+            }
         }
     };
+}
+
+pub fn define_callback(
+    args: TokenStream,
+    input: TokenStream,
+    callback_type: MacroCallbackType,
+) -> TokenStream {
+    let state_struct = parse_macro_input!(args as syn::Ident);
+    let function = parse_macro_input!(input as syn::Item);
+
+    let function_name = if let syn::Item::Fn(syn::ItemFn { ref sig, .. }) = function {
+        sig.ident.clone()
+    } else {
+        panic!("missing function name")
+    };
+
+    let callback_args = get_callback_args(&function);
+    let inputs: Vec<&CallbackArg> = callback_args
+        .iter()
+        .filter_map(|cb| match cb.arg_type {
+            CallbackArgType::Input => Some(cb),
+            _ => None,
+        })
+        .collect();
+    let outputs: Vec<&CallbackArg> = callback_args
+        .iter()
+        .filter_map(|cb| match cb.arg_type {
+            CallbackArgType::Output => Some(cb),
+            _ => None,
+        })
+        .collect();
+
+    let wrapper_name = syn::Ident::new(&format!("{}_wrapper", function_name), function_name.span());
+    let wrapper_fn = generate_wrapper_fn(
+        &state_struct,
+        &function_name,
+        &wrapper_name,
+        &callback_args,
+        &outputs,
+    );
+
+    let get_info_fn = generate_get_info_fn(
+        &state_struct,
+        &function_name,
+        &wrapper_name,
+        &inputs,
+        &outputs,
+        &callback_type,
+    );
 
     quote! {
         #[cfg(feature = "ssr")]
         #function
 
         #[cfg(feature = "ssr")]
-        #wrapper
+        #wrapper_fn
 
         #get_info_fn
     }

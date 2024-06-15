@@ -183,6 +183,7 @@ fn generate_get_info_fn(
                                                         <#state_struct as ::dust::StateTypes>::Value> {
                     ::dust::Callback::new(
                         #function_name_str,
+                        // Server callbacks should only have wrappers available in the server binary.
                         #[cfg(feature = "ssr")]
                         Some(#wrapper_name),
                         #[cfg(not(feature = "ssr"))]
@@ -259,14 +260,27 @@ pub fn define_callback(
         &callback_type,
     );
 
-    quote! {
-        #[cfg(feature = "ssr")]
-        #function
+    return match callback_type {
+        MacroCallbackType::Server => {
+            quote! {
+                // Server callbacks should only have their function and wrapper compiled in the server binary.
+                #[cfg(feature = "ssr")]
+                #function
 
-        #[cfg(feature = "ssr")]
-        #wrapper_fn
+                #[cfg(feature = "ssr")]
+                #wrapper_fn
 
-        #get_info_fn
-    }
-    .into()
+                #get_info_fn
+            }
+            .into()
+        }
+        MacroCallbackType::Client => quote! {
+            #function
+
+            #wrapper_fn
+
+            #get_info_fn
+        }
+        .into(),
+    };
 }

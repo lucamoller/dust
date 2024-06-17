@@ -167,7 +167,7 @@ fn generate_context(state_struct: &syn::Ident, fields: &Fields) -> proc_macro2::
         let enum_ident = field_to_enum(&field.ident.clone().unwrap());
         quote! {
             Value::#enum_ident(v) => {
-                ::dust::leptos::logging::log!("apply_updates setting {}", #field_literal);
+                ::dust::dust_verbose_log!("apply_updates setting {}", #field_literal);
                 self.#signal_write_ident.set(v);
             }
         }

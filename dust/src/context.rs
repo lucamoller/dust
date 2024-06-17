@@ -1,6 +1,6 @@
 use crate::Executor;
 use crate::ValueToIdentifier;
-use crate::{ArgState, CallbackId, ExecutionArg};
+use crate::{ArgState, CallbackId, ExecutionArg, dust_verbose_log};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -16,7 +16,7 @@ pub trait ContextProvider {
         let context = Rc::new(Self::C::from_default_state());
         ::leptos::provide_context(context.clone());
         ::leptos::create_effect(move |_| {
-            ::leptos::logging::log!("Initializing state...");
+            dust_verbose_log!("Initializing state...");
             context.initialize_context();
         });
     }
@@ -67,7 +67,7 @@ where
     }
 
     fn initialize_context(self: &std::rc::Rc<Self>) {
-        ::leptos::logging::log!("initialize_context");
+        dust_verbose_log!("initialize_context");
         self.get_manager().initialized.set(true);
         self.handle_updates(self.get_values_from_identifiers(
             &Self::get_executor().get_required_initialization_inputs(),
@@ -94,8 +94,9 @@ where
         if !execution_plan.client_pre_plan.is_empty() {
             let client_pre_args =
                 self.get_execution_args(&updated_state, &execution_plan.client_pre_plan);
-            ::leptos::logging::log!("  client_pre_args: {:?}", &client_pre_args);
-            ::leptos::logging::log!(
+
+            dust_verbose_log!("  client_pre_args: {:?}", &client_pre_args);
+            dust_verbose_log!(
                 "  client_pre_plan: {:?}",
                 &Self::get_executor()
                     .callbacks_container
@@ -103,13 +104,13 @@ where
             );
             let client_pre_output = Self::get_executor()
                 .execute_plan(&client_pre_args, &execution_plan.client_pre_plan);
-            ::leptos::logging::log!("  client_pre_output: {:?}", &client_pre_output);
+            dust_verbose_log!("  client_pre_output: {:?}", &client_pre_output);
             for arg in client_pre_output.iter() {
                 let identifier = arg.value.to_identifier();
                 updated_state.insert(identifier, arg.clone());
             }
         } else {
-            ::leptos::logging::log!("  no client_pre_plan");
+            dust_verbose_log!("  no client_pre_plan");
         }
 
         let context = self.clone();
@@ -117,8 +118,8 @@ where
             if !execution_plan.server_plan.is_empty() {
                 let server_args =
                     context.get_execution_args(&updated_state, &execution_plan.server_plan);
-                ::leptos::logging::log!("  server_args: {:?}", &server_args);
-                ::leptos::logging::log!(
+                dust_verbose_log!("  server_args: {:?}", &server_args);
+                dust_verbose_log!(
                     "  server_plan: {:?}",
                     &Self::get_executor()
                         .callbacks_container
@@ -129,25 +130,25 @@ where
                         .await;
                 let server_output = match response {
                     Ok(server_output) => server_output,
-                    Err(e) => {
-                        ::leptos::logging::log!("server_callback error: {}", e);
+                    Err(_e) => {
+                        dust_verbose_log!("server_callback error: {}", _e);
                         return;
                     }
                 };
-                ::leptos::logging::log!("    server_output: {:?}", server_output);
+                dust_verbose_log!("    server_output: {:?}", server_output);
                 for arg in server_output.iter() {
                     let identifier = arg.value.to_identifier();
                     updated_state.insert(identifier, arg.clone());
                 }
             } else {
-                ::leptos::logging::log!("  no server_plan");
+                dust_verbose_log!("  no server_plan");
             }
 
             if !execution_plan.client_post_plan.is_empty() {
                 let client_post_args =
                     context.get_execution_args(&updated_state, &execution_plan.client_post_plan);
-                ::leptos::logging::log!("  client_post_args: {:?}", &client_post_args);
-                ::leptos::logging::log!(
+                dust_verbose_log!("  client_post_args: {:?}", &client_post_args);
+                dust_verbose_log!(
                     "  client_post_plan: {:?}",
                     &Self::get_executor()
                         .callbacks_container
@@ -155,13 +156,13 @@ where
                 );
                 let client_post_output = Self::get_executor()
                     .execute_plan(&client_post_args, &execution_plan.client_post_plan);
-                ::leptos::logging::log!("  client_post_output: {:?}", &client_post_output);
+                dust_verbose_log!("  client_post_output: {:?}", &client_post_output);
                 for arg in client_post_output.iter() {
                     let identifier = arg.value.to_identifier();
                     updated_state.insert(identifier, arg.clone());
                 }
             } else {
-                ::leptos::logging::log!("  no client_post_plan");
+                dust_verbose_log!("  no client_post_plan");
             }
 
             context.apply_updates(updated_state);

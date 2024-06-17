@@ -1,15 +1,15 @@
+mod callback;
 pub mod file_handler;
 pub mod serve;
-mod callback;
 pub use callback::*;
 mod context;
 pub use context::*;
 mod executor;
 pub use executor::*;
 
-
 pub use dust_macro::{
-    dust_define_client_callback, dust_define_server_callback, dust_lib, dust_main, DustState,
+    dust_define_client_callback, dust_define_server_callback, dust_lib, dust_main,
+    dust_verbose_log, DustState,
 };
 
 // Re-exports
@@ -27,7 +27,3 @@ pub use tokio;
 pub use wasm_bindgen;
 
 pub use web_sys;
-
-
-
-

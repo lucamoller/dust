@@ -46,3 +46,6 @@ ssr = [
     "leptos_meta/ssr",
     "leptos_router/ssr",
 ]
+verbose = [
+    "dust_macro/verbose",
+]

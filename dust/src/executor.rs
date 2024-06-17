@@ -1,4 +1,3 @@
-use leptos::logging::log;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -165,7 +164,7 @@ where
             .map(|id| self.get_callback(id).name)
             .collect::<Vec<&str>>()
             .join(" -> ");
-        log!(
+        dust_verbose_log!(
             "Computed callback topological order {}",
             topological_order_description
         );

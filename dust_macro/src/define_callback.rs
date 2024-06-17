@@ -10,6 +10,7 @@ pub enum MacroCallbackType {
 
 enum CallbackArgType {
     Input,
+    State,
     Output,
 }
 
@@ -35,6 +36,12 @@ fn get_arg_type(arg: &syn::FnArg) -> CallbackArgType {
             }
         }
 
+        if let syn::Type::Path(ref path) = *pat_type.ty {
+            if path.path.segments.len() > 0 && path.path.segments[0].ident == "State" {
+                return CallbackArgType::State;
+            }
+        }
+
         if let syn::Type::Reference(ref type_reference) = *pat_type.ty {
             if let syn::Type::Path(ref path) = *type_reference.elem {
                 if path.path.segments.len() > 0 && path.path.segments[0].ident == "Output" {
@@ -44,7 +51,7 @@ fn get_arg_type(arg: &syn::FnArg) -> CallbackArgType {
         }
     }
     panic!(
-        "couldn't extract arg outer type. Expected 'Input<T>' or '&mut Output<T>', \
+        "couldn't extract arg outer type. Expected 'Input<T>', 'State<T>' or '&mut Output<T>', \
         found {:#?}",
         arg
     );
@@ -80,7 +87,7 @@ fn generate_wrapper_fn(
     let output_variables = outputs.iter().map(|cb| {
         let name_ident = &cb.name_ident;
         quote! {
-            let mut #name_ident = Output::new();
+            let mut #name_ident = ::dust::Output::new();
         }
     });
 
@@ -90,7 +97,22 @@ fn generate_wrapper_fn(
             CallbackArgType::Input => {
                 let enum_ident = field_to_enum(name_ident);
                 quote! {
-                    Input {
+                    ::dust::Input {
+                        value: if let Value::#enum_ident(v) = state.get(
+                            &<#state_struct as ::dust::StateTypes>::Identifier::#enum_ident).unwrap().clone() {
+                                v
+                            }
+                        else {
+                            panic!("Failed to unwrap value enum for {:?}!", 
+                                   <#state_struct as ::dust::StateTypes>::Identifier::#enum_ident)
+                        },
+                    }
+                }
+            }
+            CallbackArgType::State => {
+                let enum_ident = field_to_enum(name_ident);
+                quote! {
+                    ::dust::State {
                         value: if let Value::#enum_ident(v) = state.get(
                             &<#state_struct as ::dust::StateTypes>::Identifier::#enum_ident).unwrap().clone() {
                                 v
@@ -154,6 +176,7 @@ fn generate_get_info_fn(
     function_name: &syn::Ident,
     wrapper_name: &syn::Ident,
     inputs: &Vec<&CallbackArg>,
+    states: &Vec<&CallbackArg>,
     outputs: &Vec<&CallbackArg>,
     callback_type: &MacroCallbackType,
 ) -> proc_macro2::TokenStream {
@@ -162,6 +185,13 @@ fn generate_get_info_fn(
         let input_enum = field_to_enum(input_ident);
         quote! {
             <#state_struct as ::dust::StateTypes>::Identifier::#input_enum
+        }
+    });
+    let state_entries = states.iter().map(|arg| {
+        let state_ident = &arg.name_ident;
+        let state_enum = field_to_enum(state_ident);
+        quote! {
+            <#state_struct as ::dust::StateTypes>::Identifier::#state_enum
         }
     });
     let output_entries = outputs.iter().map(|arg| {
@@ -189,6 +219,7 @@ fn generate_get_info_fn(
                         #[cfg(not(feature = "ssr"))]
                         None,
                         vec![#(#input_entries,)*],
+                        vec![#(#state_entries,)*],
                         vec![#(#output_entries,)*],
                         ::dust::CallbackType::Server,
                     )
@@ -203,6 +234,7 @@ fn generate_get_info_fn(
                         #function_name_str,
                         Some(#wrapper_name),
                         vec![#(#input_entries,)*],
+                        vec![#(#state_entries,)*],
                         vec![#(#output_entries,)*],
                         ::dust::CallbackType::Client,
                     )
@@ -234,6 +266,13 @@ pub fn define_callback(
             _ => None,
         })
         .collect();
+    let states: Vec<&CallbackArg> = callback_args
+        .iter()
+        .filter_map(|cb| match cb.arg_type {
+            CallbackArgType::State => Some(cb),
+            _ => None,
+        })
+        .collect();
     let outputs: Vec<&CallbackArg> = callback_args
         .iter()
         .filter_map(|cb| match cb.arg_type {
@@ -256,6 +295,7 @@ pub fn define_callback(
         &function_name,
         &wrapper_name,
         &inputs,
+        &states,
         &outputs,
         &callback_type,
     );

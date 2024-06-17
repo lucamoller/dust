@@ -441,6 +441,9 @@ where
             for input in callback.inputs.iter() {
                 args.insert(*input);
             }
+            for state in callback.states.iter() {
+                args.insert(*state);
+            }
         }
         return args;
     }

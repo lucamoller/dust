@@ -4,6 +4,10 @@ pub struct Input<T> {
     pub value: T,
 }
 
+pub struct State<T> {
+    pub value: T,
+}
+
 #[derive(Clone, Copy)]
 pub enum OutputState<T> {
     NoChange,
@@ -37,6 +41,7 @@ pub struct Callback<I, V> {
     pub name: &'static str,
     pub cb: Option<fn(&HashMap<I, V>) -> Vec<V>>,
     pub inputs: Vec<I>,
+    pub states: Vec<I>,
     pub outputs: Vec<I>,
     pub cb_type: CallbackType,
 }
@@ -46,6 +51,7 @@ impl<I, V> Callback<I, V> {
         name: &'static str,
         cb: Option<fn(&HashMap<I, V>) -> Vec<V>>,
         inputs: Vec<I>,
+        states: Vec<I>,
         outputs: Vec<I>,
         cb_type: CallbackType,
     ) -> Self {
@@ -53,6 +59,7 @@ impl<I, V> Callback<I, V> {
             name,
             cb,
             inputs,
+            states,
             outputs,
             cb_type,
         }

@@ -96,7 +96,7 @@ fn generate_executor(state_struct: &syn::Ident) -> proc_macro2::TokenStream {
             for callback in super::#state_struct::get_registered_callbacks() {
                 app.register_callback(callback);
             }
-            app.init_callbacks();
+            app.complete_registration();
             app
         });
 
@@ -107,7 +107,8 @@ fn generate_executor(state_struct: &syn::Ident) -> proc_macro2::TokenStream {
         ) -> Result<Vec<::dust::ExecutionArg<Value>>, ::dust::leptos::ServerFnError> {
             println!(
                 "server_callback execution_args: {:#?} server_plan {:?}",
-                execution_args, server_plan
+                execution_args,
+                &EXECUTOR.callbacks_container.get_callback_names(&server_plan)
             );
 
             let output_updates = EXECUTOR.execute_plan(&execution_args, &server_plan);

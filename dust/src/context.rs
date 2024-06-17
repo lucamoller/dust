@@ -60,7 +60,7 @@ where
             match arg.state {
                 ArgState::Updated => {
                     self.update_value(arg.value);
-                },
+                }
                 ArgState::Unmodified => {}
             };
         }
@@ -95,7 +95,12 @@ where
             let client_pre_args =
                 self.get_execution_args(&updated_state, &execution_plan.client_pre_plan);
             ::leptos::logging::log!("  client_pre_args: {:?}", &client_pre_args);
-            ::leptos::logging::log!("  client_pre_plan: {:?}", &execution_plan.client_pre_plan);
+            ::leptos::logging::log!(
+                "  client_pre_plan: {:?}",
+                &Self::get_executor()
+                    .callbacks_container
+                    .get_callback_names(&execution_plan.client_pre_plan)
+            );
             let client_pre_output = Self::get_executor()
                 .execute_plan(&client_pre_args, &execution_plan.client_pre_plan);
             ::leptos::logging::log!("  client_pre_output: {:?}", &client_pre_output);
@@ -113,7 +118,12 @@ where
                 let server_args =
                     context.get_execution_args(&updated_state, &execution_plan.server_plan);
                 ::leptos::logging::log!("  server_args: {:?}", &server_args);
-                ::leptos::logging::log!("  server_plan: {:?}", &execution_plan.server_plan);
+                ::leptos::logging::log!(
+                    "  server_plan: {:?}",
+                    &Self::get_executor()
+                        .callbacks_container
+                        .get_callback_names(&execution_plan.server_plan)
+                );
                 let response =
                     Self::execute_server_callbacks(server_args, execution_plan.server_plan.clone())
                         .await;
@@ -139,7 +149,9 @@ where
                 ::leptos::logging::log!("  client_post_args: {:?}", &client_post_args);
                 ::leptos::logging::log!(
                     "  client_post_plan: {:?}",
-                    &execution_plan.client_post_plan
+                    &Self::get_executor()
+                        .callbacks_container
+                        .get_callback_names(&execution_plan.client_post_plan)
                 );
                 let client_post_output = Self::get_executor()
                     .execute_plan(&client_post_args, &execution_plan.client_post_plan);

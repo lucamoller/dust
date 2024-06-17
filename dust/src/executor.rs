@@ -6,36 +6,12 @@ use std::hash::Hash;
 use crate::*;
 
 pub struct CallbacksContainer<I, V> {
+    // List of registered callbacks.
     callbacks: Vec<CallbackWithId<I, V>>,
-}
+    // Whether all callbacks have been registered and the callback relationship metadata is available.
+    completed_registration: bool,
 
-impl<I, V> CallbacksContainer<I, V> {
-    pub fn new() -> CallbacksContainer<I, V> {
-        return CallbacksContainer {
-            callbacks: Vec::new(),
-        };
-    }
-
-    pub fn add_callback(&mut self, callback: Callback<I, V>) {
-        let id = CallbackId(self.callbacks.len());
-
-        self.callbacks.push(CallbackWithId {
-            id: id,
-            callback: callback,
-        });
-    }
-
-    pub fn get_callback(&self, id: &CallbackId) -> &Callback<I, V> {
-        return &self.callbacks[id.callback_index()].callback;
-    }
-
-    pub fn all_callbacks(&self) -> &Vec<CallbackWithId<I, V>> {
-        return &self.callbacks;
-    }
-}
-
-pub struct Executor<I, V> {
-    callbacks_container: CallbacksContainer<I, V>,
+    // Maps value identifiers to callbacks in which they're inputs.
     input_to_callbacks: HashMap<I, Vec<CallbackId>>,
     // Maps callback ids to the ids of callbacks that are immediately triggered by them.
     callback_to_dependents: HashMap<CallbackId, Vec<CallbackId>>,
@@ -43,62 +19,44 @@ pub struct Executor<I, V> {
     callback_to_ancestors: HashMap<CallbackId, Vec<CallbackId>>,
     // Maps callback ids to their index in the topological sort.
     callback_to_topological_rank: HashMap<CallbackId, usize>,
+    // Empty vector of callbacks (use to return a reference of to an empty vector).
+    empty_callback_vec: Vec<CallbackId>,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct ExecutionPlan {
-    // Sequence of callbacks that should be executed in the client before the server callbacks.
-    pub client_pre_plan: Vec<CallbackId>,
-    // Sequence of callbacks that should be executed in the server.
-    pub server_plan: Vec<CallbackId>,
-    // Sequence of callbacks that should be executed in the client after the server callbacks.
-    pub client_post_plan: Vec<CallbackId>,
-}
-
-impl ExecutionPlan {
-    pub fn new() -> ExecutionPlan {
-        ExecutionPlan {
-            client_pre_plan: Vec::new(),
-            server_plan: Vec::new(),
-            client_post_plan: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum ArgState {
-    Unmodified,
-    Updated,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ExecutionArg<V> {
-    pub value: V,
-    pub state: ArgState,
-}
-
-impl<I, V> Executor<I, V>
+impl<I, V> CallbacksContainer<I, V>
 where
     I: Hash + PartialEq + Eq + Clone + Copy,
     V: Clone + std::fmt::Debug + ValueToIdentifier<I>,
 {
-    pub fn new() -> Executor<I, V> {
-        let app = Executor {
-            callbacks_container: CallbacksContainer::new(),
+    pub fn new() -> CallbacksContainer<I, V> {
+        return CallbacksContainer {
+            callbacks: Vec::new(),
+            completed_registration: false,
             input_to_callbacks: HashMap::new(),
             callback_to_dependents: HashMap::new(),
             callback_to_ancestors: HashMap::new(),
             callback_to_topological_rank: HashMap::new(),
+            empty_callback_vec: Vec::new(),
         };
-        return app;
     }
 
-    pub fn register_callback(&mut self, callback: Callback<I, V>) {
-        self.callbacks_container.add_callback(callback);
+    pub fn add_callback(&mut self, callback: Callback<I, V>) {
+        if self.completed_registration {
+            panic!(
+                "Trying to register callback ({}) after completed_registration set to true",
+                callback.name
+            );
+        }
+
+        let id = CallbackId(self.callbacks.len());
+        self.callbacks.push(CallbackWithId {
+            id: id,
+            callback: callback,
+        });
     }
 
-    pub fn init_callbacks(&mut self) {
-        for cb in self.callbacks_container.all_callbacks().iter() {
+    pub fn complete_registration(&mut self) {
+        for cb in self.callbacks.iter() {
             for input in cb.callback.inputs.iter() {
                 if !self.input_to_callbacks.contains_key(input) {
                     self.input_to_callbacks.insert(input.clone(), Vec::new());
@@ -110,7 +68,7 @@ where
         }
 
         let mut callback_names: HashMap<CallbackId, &'static str> = HashMap::new();
-        for cb in self.callbacks_container.all_callbacks().iter() {
+        for cb in self.callbacks.iter() {
             callback_names.insert(cb.id, cb.callback.name);
             self.callback_to_dependents.insert(cb.id, Vec::new());
             let dependents = self.callback_to_dependents.get_mut(&cb.id).unwrap();
@@ -179,7 +137,7 @@ where
             return false;
         }
 
-        for cb in self.callbacks_container.all_callbacks().iter() {
+        for cb in self.all_callbacks().iter() {
             if !perm_marks.contains(&cb.id) {
                 if visit(
                     cb.id,
@@ -193,7 +151,7 @@ where
                     let cycle_description = cycle
                         .iter()
                         .rev()
-                        .map(|id| self.callbacks_container.get_callback(id).name)
+                        .map(|id| self.get_callback(id).name)
                         .collect::<Vec<&str>>()
                         .join(" -> ");
                     panic!("Found callback cycle: {}", cycle_description);
@@ -204,7 +162,7 @@ where
         topological_order.reverse();
         let topological_order_description = topological_order
             .iter()
-            .map(|id| self.callbacks_container.get_callback(id).name)
+            .map(|id| self.get_callback(id).name)
             .collect::<Vec<&str>>()
             .join(" -> ");
         log!(
@@ -215,15 +173,113 @@ where
         for (rank, id) in topological_order.iter().enumerate() {
             self.callback_to_topological_rank.insert(*id, rank);
         }
+
+        self.completed_registration = true;
+    }
+
+    pub fn get_callbacks_with_input(&self, identifier: &I) -> &Vec<CallbackId> {
+        return match self.input_to_callbacks.get(identifier) {
+            Some(callbacks) => callbacks,
+            None => &self.empty_callback_vec,
+        };
+    }
+}
+
+impl<I, V> CallbacksContainer<I, V> {
+    pub fn get_callback(&self, id: &CallbackId) -> &Callback<I, V> {
+        return &self.callbacks[id.callback_index()].callback;
+    }
+
+    pub fn all_callbacks(&self) -> &Vec<CallbackWithId<I, V>> {
+        return &self.callbacks;
+    }
+
+    pub fn get_dependents(&self, id: &CallbackId) -> &Vec<CallbackId> {
+        return match self.callback_to_dependents.get(id) {
+            Some(callbacks) => callbacks,
+            None => &self.empty_callback_vec,
+        };
+    }
+
+    pub fn get_ancestors(&self, id: &CallbackId) -> &Vec<CallbackId> {
+        return match self.callback_to_ancestors.get(id) {
+            Some(callbacks) => callbacks,
+            None => &self.empty_callback_vec,
+        };
+    }
+
+    pub fn get_topological_rank(&self, id: &CallbackId) -> usize {
+        return *self.callback_to_topological_rank.get(id).unwrap();
+    }
+
+    pub fn get_callback_names(&self, ids: &Vec<CallbackId>) -> Vec<&'static str> {
+        return ids.iter().map(|id| self.get_callback(id).name).collect();
+    }
+}
+
+pub struct Executor<I, V> {
+    pub callbacks_container: CallbacksContainer<I, V>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ExecutionPlan {
+    // Sequence of callbacks that should be executed in the client before the server callbacks.
+    pub client_pre_plan: Vec<CallbackId>,
+    // Sequence of callbacks that should be executed in the server.
+    pub server_plan: Vec<CallbackId>,
+    // Sequence of callbacks that should be executed in the client after the server callbacks.
+    pub client_post_plan: Vec<CallbackId>,
+}
+
+impl ExecutionPlan {
+    pub fn new() -> ExecutionPlan {
+        ExecutionPlan {
+            client_pre_plan: Vec::new(),
+            server_plan: Vec::new(),
+            client_post_plan: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum ArgState {
+    Unmodified,
+    Updated,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ExecutionArg<V> {
+    pub value: V,
+    pub state: ArgState,
+}
+
+impl<I, V> Executor<I, V>
+where
+    I: Hash + PartialEq + Eq + Clone + Copy,
+    V: Clone + std::fmt::Debug + ValueToIdentifier<I>,
+{
+    pub fn new() -> Executor<I, V> {
+        let app = Executor {
+            callbacks_container: CallbacksContainer::new(),
+        };
+        return app;
+    }
+
+    pub fn register_callback(&mut self, callback: Callback<I, V>) {
+        self.callbacks_container.add_callback(callback);
+    }
+
+    pub fn complete_registration(&mut self) {
+        self.callbacks_container.complete_registration();
     }
 
     pub fn get_execution_plan(&self, updated_inputs: &HashSet<I>) -> ExecutionPlan {
         let mut full_plan: Vec<CallbackId> = Vec::new();
         let mut visited_cb_ids: HashSet<CallbackId> = HashSet::new();
 
-        fn visit(
-            id: CallbackId,
-            callback_to_dependents: &HashMap<CallbackId, Vec<CallbackId>>,
+        fn visit<I, V>(
+            id: &CallbackId,
+            callbacks_container: &CallbacksContainer<I, V>,
             full_plan: &mut Vec<CallbackId>,
             visited_cb_ids: &mut HashSet<CallbackId>,
         ) {
@@ -231,37 +287,51 @@ where
                 return;
             }
 
-            full_plan.push(id);
-            visited_cb_ids.insert(id);
-            for dep in callback_to_dependents.get(&id).unwrap().iter() {
-                visit(*dep, callback_to_dependents, full_plan, visited_cb_ids);
+            full_plan.push(*id);
+            visited_cb_ids.insert(*id);
+            for dep in callbacks_container.get_dependents(id).iter() {
+                visit(dep, callbacks_container, full_plan, visited_cb_ids);
             }
         }
 
         for input in updated_inputs.iter() {
-            for id in self.input_to_callbacks.get(input).unwrap().iter() {
+            for id in self
+                .callbacks_container
+                .get_callbacks_with_input(input)
+                .iter()
+            {
                 visit(
-                    *id,
-                    &self.callback_to_dependents,
+                    id,
+                    &self.callbacks_container,
                     &mut full_plan,
                     &mut visited_cb_ids,
                 );
             }
         }
 
-        full_plan.sort_by_key(|id| self.callback_to_topological_rank.get(id).unwrap());
+        full_plan.sort_by_key(|id| self.callbacks_container.get_topological_rank(id));
+
+        enum ClientOnlyDirection {
+            Ancestors,
+            Dependents,
+        }
 
         fn is_client_only<I, V>(
             id: &CallbackId,
             callbacks_container: &CallbacksContainer<I, V>,
             callbacks_in_plan: &HashSet<CallbackId>,
-            callback_to_edges: &HashMap<CallbackId, Vec<CallbackId>>,
+            direction: &ClientOnlyDirection,
             visited: &mut HashMap<CallbackId, bool>,
         ) -> bool {
             if callbacks_container.get_callback(id).cb_type == CallbackType::Server {
                 return false;
             }
-            for next_id in callback_to_edges.get(id).unwrap().iter() {
+            for next_id in match direction {
+                ClientOnlyDirection::Ancestors => callbacks_container.get_ancestors(id),
+                ClientOnlyDirection::Dependents => callbacks_container.get_dependents(id),
+            }
+            .iter()
+            {
                 if !callbacks_in_plan.contains(next_id) {
                     continue;
                 }
@@ -269,7 +339,7 @@ where
                     next_id,
                     callbacks_container,
                     callbacks_in_plan,
-                    callback_to_edges,
+                    direction,
                     visited,
                 ) {
                     visited.insert(*id, false);
@@ -291,8 +361,6 @@ where
             id: &CallbackId,
             callbacks_container: &CallbacksContainer<I, V>,
             callbacks_in_plan: &HashSet<CallbackId>,
-            callbacks_to_ancestors: &HashMap<CallbackId, Vec<CallbackId>>,
-            callbacks_to_dependents: &HashMap<CallbackId, Vec<CallbackId>>,
             visited_pre: &mut HashMap<CallbackId, bool>,
             visited_post: &mut HashMap<CallbackId, bool>,
         ) -> PlanAssignment {
@@ -309,7 +377,7 @@ where
                     id,
                     callbacks_container,
                     callbacks_in_plan,
-                    callbacks_to_ancestors,
+                    &ClientOnlyDirection::Ancestors,
                     visited_pre,
                 ) {
                     return PlanAssignment::ClientPre;
@@ -325,7 +393,7 @@ where
                     id,
                     callbacks_container,
                     callbacks_in_plan,
-                    callbacks_to_dependents,
+                    &ClientOnlyDirection::Dependents,
                     visited_post,
                 ) {
                     return PlanAssignment::ClientPost;
@@ -345,8 +413,6 @@ where
                 id,
                 &self.callbacks_container,
                 &callbacks_in_plans,
-                &self.callback_to_ancestors,
-                &self.callback_to_dependents,
                 &mut visited_pre,
                 &mut visited_post,
             ) {

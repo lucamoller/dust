@@ -26,7 +26,7 @@ impl<T: Clone> Output<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum CallbackType {
     Server,
     Client,
@@ -75,7 +75,7 @@ impl<I, V> PartialEq for Callback<I, V> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallbackId(pub usize);
 
 impl CallbackId {

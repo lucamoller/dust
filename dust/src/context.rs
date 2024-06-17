@@ -1,8 +1,10 @@
 use crate::Executor;
 use crate::ValueToIdentifier;
+use crate::{ArgState, CallbackId, ExecutionArg};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -38,9 +40,10 @@ where
     fn get_executor() -> &'static Executor<Self::I, Self::V>;
 
     fn execute_server_callbacks(
-        input_updates: Vec<Self::V>,
-        required_state: Vec<Self::V>,
-    ) -> impl std::future::Future<Output = Result<Vec<Self::V>, ::leptos::ServerFnError>> + Send;
+        execution_args: Vec<ExecutionArg<Self::V>>,
+        server_plan: Vec<CallbackId>,
+    ) -> impl std::future::Future<Output = Result<Vec<ExecutionArg<Self::V>>, ::leptos::ServerFnError>>
+           + Send;
 
     fn get_values_from_identifiers(
         &self,
@@ -52,9 +55,14 @@ where
             .collect()
     }
 
-    fn apply_updates(&self, updates: Vec<Self::V>) {
-        for update in updates {
-            self.update_value(update);
+    fn apply_updates(&self, updated_state: HashMap<Self::I, ExecutionArg<Self::V>>) {
+        for (_, arg) in updated_state {
+            match arg.state {
+                ArgState::Updated => {
+                    self.update_value(arg.value);
+                },
+                ArgState::Unmodified => {}
+            };
         }
     }
 
@@ -67,31 +75,110 @@ where
     }
 
     fn handle_updates(self: &std::rc::Rc<Self>, input_updates: Vec<Self::V>) {
-        let updated_inputs = input_updates.iter().map(|v| v.to_identifier()).collect();
+        let updated_inputs: HashSet<Self::I> =
+            input_updates.iter().map(|v| v.to_identifier()).collect();
         let execution_plan = Self::get_executor().get_execution_plan(&updated_inputs);
-        let required_state =
-            Self::get_executor().get_required_state(&updated_inputs, &execution_plan);
-        let required_state_values = self.get_values_from_identifiers(&required_state);
 
-        ::leptos::logging::log!("handle_updates call");
-        ::leptos::logging::log!("  input_updates: {:?}", input_updates);
-        ::leptos::logging::log!("  execution_plan: {:?}", execution_plan);
-        ::leptos::logging::log!("  required_state_values: {:?}", required_state_values);
+        let mut updated_state: HashMap<Self::I, ExecutionArg<Self::V>> = HashMap::new();
+        for value in input_updates.iter() {
+            let identifier = value.to_identifier();
+            updated_state.insert(
+                identifier,
+                ExecutionArg {
+                    value: value.clone(),
+                    state: ArgState::Updated,
+                },
+            );
+        }
 
-        let state = self.clone();
-        ::leptos::spawn_local(async move {
-            let response =
-                Self::execute_server_callbacks(input_updates, required_state_values).await;
-            match response {
-                Ok(output_updates) => {
-                    ::leptos::logging::log!("    server output_updates: {:?}", output_updates);
-                    state.apply_updates(output_updates);
-                }
-                Err(e) => {
-                    ::leptos::logging::log!("server_callback error: {}", e);
-                }
+        if !execution_plan.client_pre_plan.is_empty() {
+            let client_pre_args =
+                self.get_execution_args(&updated_state, &execution_plan.client_pre_plan);
+            ::leptos::logging::log!("  client_pre_args: {:?}", &client_pre_args);
+            ::leptos::logging::log!("  client_pre_plan: {:?}", &execution_plan.client_pre_plan);
+            let client_pre_output = Self::get_executor()
+                .execute_plan(&client_pre_args, &execution_plan.client_pre_plan);
+            ::leptos::logging::log!("  client_pre_output: {:?}", &client_pre_output);
+            for arg in client_pre_output.iter() {
+                let identifier = arg.value.to_identifier();
+                updated_state.insert(identifier, arg.clone());
             }
+        } else {
+            ::leptos::logging::log!("  no client_pre_plan");
+        }
+
+        let context = self.clone();
+        ::leptos::spawn_local(async move {
+            if !execution_plan.server_plan.is_empty() {
+                let server_args =
+                    context.get_execution_args(&updated_state, &execution_plan.server_plan);
+                ::leptos::logging::log!("  server_args: {:?}", &server_args);
+                ::leptos::logging::log!("  server_plan: {:?}", &execution_plan.server_plan);
+                let response =
+                    Self::execute_server_callbacks(server_args, execution_plan.server_plan.clone())
+                        .await;
+                let server_output = match response {
+                    Ok(server_output) => server_output,
+                    Err(e) => {
+                        ::leptos::logging::log!("server_callback error: {}", e);
+                        return;
+                    }
+                };
+                ::leptos::logging::log!("    server_output: {:?}", server_output);
+                for arg in server_output.iter() {
+                    let identifier = arg.value.to_identifier();
+                    updated_state.insert(identifier, arg.clone());
+                }
+            } else {
+                ::leptos::logging::log!("  no server_plan");
+            }
+
+            if !execution_plan.client_post_plan.is_empty() {
+                let client_post_args =
+                    context.get_execution_args(&updated_state, &execution_plan.client_post_plan);
+                ::leptos::logging::log!("  client_post_args: {:?}", &client_post_args);
+                ::leptos::logging::log!(
+                    "  client_post_plan: {:?}",
+                    &execution_plan.client_post_plan
+                );
+                let client_post_output = Self::get_executor()
+                    .execute_plan(&client_post_args, &execution_plan.client_post_plan);
+                ::leptos::logging::log!("  client_post_output: {:?}", &client_post_output);
+                for arg in client_post_output.iter() {
+                    let identifier = arg.value.to_identifier();
+                    updated_state.insert(identifier, arg.clone());
+                }
+            } else {
+                ::leptos::logging::log!("  no client_post_plan");
+            }
+
+            context.apply_updates(updated_state);
         });
+    }
+
+    fn get_execution_args(
+        &self,
+        updated_state: &HashMap<Self::I, ExecutionArg<Self::V>>,
+        plan: &Vec<CallbackId>,
+    ) -> Vec<ExecutionArg<Self::V>> {
+        let mut execution_args: Vec<ExecutionArg<Self::V>> = Vec::new();
+
+        let required_args = Self::get_executor().get_required_args(plan);
+
+        for identifier in required_args.iter() {
+            match updated_state.get(identifier) {
+                Some(arg) => {
+                    execution_args.push(arg.clone());
+                }
+                None => {
+                    execution_args.push(ExecutionArg {
+                        value: self.read_value(identifier).clone(),
+                        state: ArgState::Unmodified,
+                    });
+                }
+            };
+        }
+        return execution_args;
     }
 }
 

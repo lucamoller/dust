@@ -102,15 +102,15 @@ fn generate_executor(state_struct: &syn::Ident) -> proc_macro2::TokenStream {
 
         #[::leptos::server(ServerCallback, "/server_callback", "Cbor")]
         pub async fn execute_server_callbacks(
-            input_updates: Vec<Value>,
-            required_state: Vec<Value>,
-        ) -> Result<Vec<Value>, ::dust::leptos::ServerFnError> {
+            execution_args: Vec<::dust::ExecutionArg<Value>>,
+            server_plan: Vec<::dust::CallbackId>,
+        ) -> Result<Vec<::dust::ExecutionArg<Value>>, ::dust::leptos::ServerFnError> {
             println!(
-                "server_callback input_updates: {:?} required_state {:?}",
-                input_updates, required_state
+                "server_callback execution_args: {:#?} server_plan {:?}",
+                execution_args, server_plan
             );
 
-            let output_updates = EXECUTOR.process_updates(input_updates, required_state);
+            let output_updates = EXECUTOR.execute_plan(&execution_args, &server_plan);
             Ok(output_updates)
         }
     };
@@ -275,10 +275,11 @@ fn generate_context(state_struct: &syn::Ident, fields: &Fields) -> proc_macro2::
             }
 
             fn execute_server_callbacks(
-                input_updates: Vec<Self::V>,
-                required_state: Vec<Self::V>,
-            ) -> impl std::future::Future<Output = Result<Vec<Self::V>, ::leptos::ServerFnError>> + Send {
-                return execute_server_callbacks(input_updates, required_state);
+                execution_args: Vec<::dust::ExecutionArg<Self::V>>,
+                server_plan: Vec<::dust::CallbackId>,
+            ) -> impl std::future::Future<Output = Result<Vec<::dust::ExecutionArg<Self::V>>, ::leptos::ServerFnError>>
+                   + Send {
+                return execute_server_callbacks(execution_args, server_plan);
             }
         }
 

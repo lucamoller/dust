@@ -252,6 +252,15 @@ pub struct ExecutionArg<V> {
     pub state: ArgState,
 }
 
+impl<V> ExecutionArg<V> {
+    pub fn updated(&self) -> bool {
+        return match self.state {
+            ArgState::Unmodified => false,
+            ArgState::Updated => true,
+        }
+    }
+}
+
 impl<I, V> Executor<I, V>
 where
     I: Hash + PartialEq + Eq + Clone + Copy,
@@ -496,33 +505,33 @@ where
         execution_args: &Vec<ExecutionArg<V>>,
         plan: &Vec<CallbackId>,
     ) -> Vec<ExecutionArg<V>> {
-        let mut state: HashMap<I, V> = HashMap::new();
+        let mut state: HashMap<I, ExecutionArg<V>> = HashMap::new();
 
         for arg in execution_args.iter() {
             let identifier = arg.value.to_identifier();
-            state.insert(identifier, arg.value.clone());
+            state.insert(identifier, arg.clone());
         }
 
-        let mut output_updates: Vec<V> = Vec::new();
+        let mut output_updates: Vec<ExecutionArg<V>> = Vec::new();
         for id in plan.iter() {
             let callback = &self.callbacks_container.get_callback(id);
 
             let mut new_updates = (callback.cb.unwrap())(&state);
-            for value in new_updates.iter() {
-                let identifier = value.to_identifier();
-                state.insert(identifier, value.clone());
+            for arg in new_updates.iter() {
+                let identifier = arg.value.to_identifier();
+                state.insert(identifier, arg.clone());
             }
             output_updates.append(&mut new_updates);
         }
 
         println!("output_updates: {:?}", output_updates);
-        return output_updates
-            .iter()
-            .cloned()
-            .map(|value| ExecutionArg {
-                value: value,
-                state: ArgState::Updated,
-            })
-            .collect();
+        return output_updates;
+            // .iter()
+            // .cloned()
+            // .map(|value| ExecutionArg {
+            //     value: value,
+            //     state: ArgState::Updated,
+            // })
+            // .collect();
     }
 }

@@ -97,15 +97,19 @@ fn generate_wrapper_fn(
             CallbackArgType::Input => {
                 let enum_ident = field_to_enum(name_ident);
                 quote! {
-                    ::dust::Input {
-                        value: if let Value::#enum_ident(v) = state.get(
-                            &<#state_struct as ::dust::StateTypes>::Identifier::#enum_ident).unwrap().clone() {
-                                v
-                            }
-                        else {
-                            panic!("Failed to unwrap value enum for {:?}!", 
-                                   <#state_struct as ::dust::StateTypes>::Identifier::#enum_ident)
-                        },
+                    {
+                        let execution_arg = state.get(
+                            &<#state_struct as ::dust::StateTypes>::Identifier::#enum_ident).unwrap();
+                        ::dust::Input {
+                            value: if let Value::#enum_ident(v) = execution_arg.value.clone() {
+                                    v
+                                }
+                            else {
+                                panic!("Failed to unwrap value enum for {:?}!", 
+                                    <#state_struct as ::dust::StateTypes>::Identifier::#enum_ident)
+                            },
+                            updated: execution_arg.updated(),
+                        }
                     }
                 }
             }
@@ -114,7 +118,7 @@ fn generate_wrapper_fn(
                 quote! {
                     ::dust::State {
                         value: if let Value::#enum_ident(v) = state.get(
-                            &<#state_struct as ::dust::StateTypes>::Identifier::#enum_ident).unwrap().clone() {
+                            &<#state_struct as ::dust::StateTypes>::Identifier::#enum_ident).unwrap().value.clone() {
                                 v
                             }
                         else {
@@ -138,7 +142,10 @@ fn generate_wrapper_fn(
                 match #name_ident.state {
                     ::dust::OutputState::NoChange => None,
                     ::dust::OutputState::Updated(value) => Some(
-                        <#state_struct as ::dust::StateTypes>::Value::#enum_ident(value.clone())
+                        ::dust::ExecutionArg {
+                            value: <#state_struct as ::dust::StateTypes>::Value::#enum_ident(value.clone()),
+                            state: ::dust::ArgState::Updated,
+                        }
                     ),
                 }
             }
@@ -148,6 +155,16 @@ fn generate_wrapper_fn(
             vec![
                 #(#output_updates,)*
             ].iter().filter_map(|x| { x.clone() }).collect()
+            // vec![
+            //     #(#output_updates,)*
+            // ].iter().filter_map(|value| ExecutionArg {
+            //         value: value,
+            //         state: ArgState::Updated,
+            //     }).collect()
+            // .iter()
+            // .cloned()
+            // .map(|value| )
+            // .collect();
         }
     } else {
         quote! {
@@ -158,8 +175,8 @@ fn generate_wrapper_fn(
     return quote! {
         fn #wrapper_name(
             state: &::std::collections::HashMap<<#state_struct as ::dust::StateTypes>::Identifier,
-                                                <#state_struct as ::dust::StateTypes>::Value>
-        ) -> Vec<<#state_struct as ::dust::StateTypes>::Value> {
+                                                ::dust::ExecutionArg<<#state_struct as ::dust::StateTypes>::Value>>
+        ) -> Vec<::dust::ExecutionArg<<#state_struct as ::dust::StateTypes>::Value>> {
             type Value = <#state_struct as ::dust::StateTypes>::Value;
 
             #(#output_variables)*

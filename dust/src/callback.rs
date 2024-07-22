@@ -1,7 +1,9 @@
+use crate::*;
 use std::collections::HashMap;
 
 pub struct Input<T> {
     pub value: T,
+    pub updated: bool,
 }
 
 pub struct State<T> {
@@ -39,7 +41,7 @@ pub enum CallbackType {
 #[derive(Clone)]
 pub struct Callback<I, V> {
     pub name: &'static str,
-    pub cb: Option<fn(&HashMap<I, V>) -> Vec<V>>,
+    pub cb: Option<fn(&HashMap<I, ExecutionArg<V>>) -> Vec<ExecutionArg<V>>>,
     pub inputs: Vec<I>,
     pub states: Vec<I>,
     pub outputs: Vec<I>,
@@ -49,7 +51,7 @@ pub struct Callback<I, V> {
 impl<I, V> Callback<I, V> {
     pub fn new(
         name: &'static str,
-        cb: Option<fn(&HashMap<I, V>) -> Vec<V>>,
+        cb: Option<fn(&HashMap<I, ExecutionArg<V>>) -> Vec<ExecutionArg<V>>>,
         inputs: Vec<I>,
         states: Vec<I>,
         outputs: Vec<I>,

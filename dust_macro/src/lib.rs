@@ -36,23 +36,19 @@ pub fn dust_main(args: TokenStream) -> TokenStream {
     return dust_main::dust_main(args);
 }
 
-#[cfg(feature = "verbose")]
 #[proc_macro]
 pub fn dust_verbose_log(args: TokenStream) -> TokenStream {
+    #[cfg(feature = "verbose")]
+    let verbose_log_enabled = quote! { true };
+    #[cfg(not(feature = "verbose"))]
+    let verbose_log_enabled = quote! { false };
+
     let args = proc_macro2::TokenStream::from(args);
     return quote! {
-        ::leptos::logging::log!(#args);
+        if #verbose_log_enabled {
+            ::leptos::logging::log!(#args);
+        }
     }
     .into();
 }
 
-#[cfg(not(feature = "verbose"))]
-#[proc_macro]
-pub fn dust_verbose_log(_args: TokenStream) -> TokenStream {
-    return quote! {}.into();
-}
-
-// #[proc_macro_attribute]
-// pub fn dust_main(args: TokenStream, input: TokenStream) -> TokenStream {
-//     return dust_main::dust_main(args, input);
-// }
